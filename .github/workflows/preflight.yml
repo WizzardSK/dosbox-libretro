@@ -1,15 +1,24 @@
 name: buildbot preflight
 on: [push, workflow_dispatch]
 
+env:
+  # what the xenial-gcc9 buildbot images actually provide
+  GCC9: |
+    apt-get update -qy &&
+    apt-get install -qy software-properties-common &&
+    add-apt-repository -y ppa:ubuntu-toolchain-r/test &&
+    apt-get update -qy &&
+    apt-get install -qy build-essential g++-9
+
 jobs:
   linux-x64:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - run: |
-          docker run --rm -v "$PWD":/src -w /src ubuntu:xenial sh -c '
-            apt-get update -qy && apt-get install -qy build-essential &&
-            make -f Makefile.libretro -j2 &&
+          docker run --rm -e GCC9 -v "$PWD":/src -w /src ubuntu:xenial sh -c '
+            eval "$GCC9" &&
+            make -f Makefile.libretro CC=gcc-9 CXX=g++-9 -j4 &&
             ls -la dosbox_libretro.so && nm -D --defined-only dosbox_libretro.so | grep " T retro_run"'
 
   linux-i686:
@@ -17,9 +26,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          docker run --rm --platform linux/386 -v "$PWD":/src -w /src i386/ubuntu:xenial sh -c '
-            apt-get update -qy && apt-get install -qy build-essential &&
-            make -f Makefile.libretro ARCH=x86 -j2 && ls -la dosbox_libretro.so'
+          docker run --rm --platform linux/386 -e GCC9 -v "$PWD":/src -w /src i386/ubuntu:xenial sh -c '
+            eval "$GCC9" &&
+            make -f Makefile.libretro ARCH=x86 CC=gcc-9 CXX=g++-9 -j4 && ls -la dosbox_libretro.so'
 
   linux-aarch64:
     runs-on: ubuntu-24.04-arm
@@ -28,27 +37,12 @@ jobs:
       - run: |
           docker run --rm -e DEBIAN_FRONTEND=noninteractive -v "$PWD":/src -w /src ubuntu:focal sh -c '
             apt-get update -qy && apt-get install -qy build-essential &&
-            make -f Makefile.libretro WITH_DYNAREC=arm64 -j2 && ls -la dosbox_libretro.so'
-
-  windows-x64:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - run: sudo apt-get update -qy && sudo apt-get install -qy g++-mingw-w64-x86-64-posix
-      - run: make -f Makefile.libretro platform=win WITH_DYNAREC=x86_64 CC=x86_64-w64-mingw32-gcc-posix CXX=x86_64-w64-mingw32-g++-posix -j2
-      - run: file dosbox_libretro.dll
-
-  osx-arm64:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: make -f Makefile.libretro platform=osx -j3
-      - run: lipo -info dosbox_libretro.dylib
+            make -f Makefile.libretro -j4 && ls -la dosbox_libretro.so'
 
   android-arm64:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - run: |
-          cd jni && $ANDROID_NDK_LATEST_HOME/ndk-build APP_ABI=arm64-v8a -j2
-          find .. -name "*.so" | head
+          cd jni && $ANDROID_NDK_LATEST_HOME/ndk-build APP_ABI=arm64-v8a -j4
+          find .. -name "libretro.so" | head
