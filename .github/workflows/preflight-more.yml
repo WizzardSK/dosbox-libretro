@@ -1,0 +1,36 @@
+name: preflight (32-bit android + webos)
+on: [push, workflow_dispatch]
+
+jobs:
+  android32:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [armeabi-v7a, x86]
+        dynarec: ["as-is", "none"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: with the dynarec jni/Android.mk picks
+        if: matrix.dynarec == 'as-is'
+        run: $ANDROID_NDK_LATEST_HOME/ndk-build --no-print-directory -j4 -C ./jni APP_ABI=${{ matrix.abi }}
+      - name: with no dynarec (interpreter)
+        if: matrix.dynarec == 'none'
+        run: $ANDROID_NDK_LATEST_HOME/ndk-build --no-print-directory -j4 -C ./jni APP_ABI=${{ matrix.abi }} WITH_DYNAREC=
+      - run: file libs/${{ matrix.abi }}/libretro.so
+
+  webos-armv7a:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        dynarec: ["arm", ""]
+    steps:
+      - uses: actions/checkout@v4
+      # Stand-in for the webOS SDK's arm-webos-linux-gnueabi toolchain.
+      - run: sudo apt-get update -qy && sudo apt-get install -qy g++-arm-linux-gnueabihf gcc-arm-linux-gnueabihf
+      - run: |
+          make -f Makefile.libretro -j4 platform=unix \
+            CC=arm-linux-gnueabihf-gcc CXX=arm-linux-gnueabihf-g++ \
+            WITH_DYNAREC=${{ matrix.dynarec }}
+      - run: file dosbox_libretro.so
