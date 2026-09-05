@@ -13,3 +13,15 @@ jobs:
             platform=osx arch=arm CC=clang CXX=clang++ CROSS_COMPILE=1 \
             LIBRETRO_APPLE_PLATFORM=arm64-apple-macos10.15
           lipo -info dosbox_libretro.dylib
+
+  android:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+      # What the android-jni template runs, JNI_PATH at its default of ".".
+      - run: $ANDROID_NDK_LATEST_HOME/ndk-build --no-print-directory -j4 -C ./jni APP_ABI=${{ matrix.abi }}
+      - run: file libs/${{ matrix.abi }}/libretro.so
