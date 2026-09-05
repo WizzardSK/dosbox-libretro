@@ -7,7 +7,9 @@
 # Core definitions
 .core-defs:
   variables:
-    JNI_PATH: jni
+    # Not JNI_PATH: the android-jni template appends /jni to it itself, so
+    # naming the directory here made it look for jni/jni and stop before it
+    # compiled anything. The default, ".", is what this repository wants.
     MAKEFILE: Makefile.libretro
     CORENAME: dosbox
 
