@@ -1,0 +1,15 @@
+name: buildbot preflight (osx-arm64)
+on: [push, workflow_dispatch]
+
+jobs:
+  osx-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      # The same thing .libretro-osx-arm64-make-default runs.
+      - run: |
+          export LIBRETRO_APPLE_ISYSROOT=$(xcodebuild -version -sdk macosx Path)
+          make -f Makefile.libretro -j4 \
+            platform=osx arch=arm CC=clang CXX=clang++ CROSS_COMPILE=1 \
+            LIBRETRO_APPLE_PLATFORM=arm64-apple-macos10.15
+          lipo -info dosbox_libretro.dylib
