@@ -226,6 +226,15 @@ else
 endif
 
 OBJECTS  = $(sort $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o))
+# The C++ here is C++11 at least - setup.h uses noexcept - and C++14 at most,
+# since the dynarec headers still say `register`, which C++17 removed. Nothing
+# says which standard a compiler will pick by default: clang on macOS picks
+# gnu++98 and stops on the first noexcept, while the NDK picks C++17 and stops
+# on the first register. So say it, unless the platform above already has.
+ifeq ($(findstring -std=,$(CXXFLAGS)),)
+CXXFLAGS += -std=gnu++14
+endif
+
 CXXFLAGS += -D__LIBRETRO__ $(fpic) $(INCFLAGS) $(COMMONFLAGS)
 CFLAGS   += -D__LIBRETRO__ $(fpic) $(INCFLAGS) $(COMMONFLAGS)
 LIBM     ?= -lm

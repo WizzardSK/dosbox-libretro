@@ -7,7 +7,9 @@
 # Core definitions
 .core-defs:
   variables:
-    JNI_PATH: jni
+    # Not JNI_PATH: the android-jni template appends /jni to it itself, so
+    # naming the directory here made it look for jni/jni and stop before it
+    # compiled anything. The default, ".", is what this repository wants.
     MAKEFILE: Makefile.libretro
     CORENAME: dosbox
 
@@ -33,6 +35,10 @@ include:
   # MacOS ARM 64-bit
   - project: 'libretro-infrastructure/ci-templates'
     file: '/osx-arm64.yml'
+
+  # webOS
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/webos-make.yml'
 
   ################################## CELLULAR ################################
   # Android
@@ -87,16 +93,25 @@ libretro-build-osx-arm64:
     - .libretro-osx-arm64-make-default
     - .core-defs
 
+# webOS ARMv7a
+# The makefile guesses the dynarec from `uname -m` on platform=unix, which is
+# the build host here, so the target's own has to be named.
+libretro-build-webos-armv7a:
+  extends:
+    - .libretro-webos-armv7a-make-default
+    - .core-defs
+  variables:
+    WITH_DYNAREC: arm
+
 ################################### CELLULAR #################################
-# Only the 64-bit ABIs: the NDK's clang rejects both 32-bit dynarecs -- the
-# ARM one writes to r7 (its frame pointer) from inline asm, and the x86 one
-# is not position independent.
+# All four ABIs. The 32-bit two run the interpreter rather than a dynarec --
+# jni/Android.mk says why -- which is still a core where there was none.
 #
 # Android ARMv7a
-#android-armeabi-v7a:
-#  extends:
-#    - .libretro-android-jni-armeabi-v7a
-#    - .core-defs
+android-armeabi-v7a:
+  extends:
+    - .libretro-android-jni-armeabi-v7a
+    - .core-defs
 
 # Android ARMv8a
 android-arm64-v8a:
@@ -105,10 +120,10 @@ android-arm64-v8a:
     - .core-defs
 
 # Android 32-bit x86
-#android-x86:
-#  extends:
-#    - .libretro-android-jni-x86
-#    - .core-defs
+android-x86:
+  extends:
+    - .libretro-android-jni-x86
+    - .core-defs
 
 # Android 64-bit x86
 android-x86_64:

@@ -4,14 +4,13 @@ CORE_DIR := $(LOCAL_PATH)/..
 INCFLAGS    :=
 COMMONFLAGS :=
 
+# No dynarec on the 32-bit ABIs: the NDK's clang rejects both of them. The ARM
+# one writes to r7 from inline asm, which is the frame pointer and reserved,
+# and the x86 one is not position independent, which the NDK requires. Both
+# ABIs build and run on the interpreter, which is what they get - the
+# alternative is not building for them at all.
 WITH_DYNAREC :=
-ifeq ($(TARGET_ARCH_ABI), armeabi)
-    WITH_DYNAREC := oldarm
-else ifeq ($(TARGET_ARCH_ABI), armeabi-v7a)
-    WITH_DYNAREC := arm
-else ifeq ($(TARGET_ARCH_ABI), x86)
-    WITH_DYNAREC := x86
-else ifeq ($(TARGET_ARCH_ABI), x86_64)
+ifeq ($(TARGET_ARCH_ABI), x86_64)
     WITH_DYNAREC := x86_64
 endif
 
