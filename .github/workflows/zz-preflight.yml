@@ -1,0 +1,193 @@
+# Preflight for the libretro buildbot recipe (.gitlab-ci.yml): replays its
+# job scripts on GitHub runners, as close to the buildbot images as they get.
+name: buildbot preflight
+on:
+  push:
+    branches: [core-base-preflight]
+  workflow_dispatch:
+env:
+  MAKEFILE_PATH: libretro
+  MAKEFILE: Makefile.libretro
+  CORENAME: dosbox
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: x64, runner: ubuntu-22.04, dynarec: x86_64 }
+          - { name: aarch64, runner: ubuntu-24.04-arm, dynarec: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends autoconf automake libtool libtool-bin pkg-config ninja-build cmake python3-pip libasound2-dev
+      - run: python3 -m pip install --user meson==0.55.3 || python3 -m pip install --user --break-system-packages meson==0.55.3
+      - name: build
+        env:
+          platform: unix
+          STATIC_LIBCXX: 1
+          WITH_DYNAREC: ${{ matrix.dynarec }}
+          BUNDLED_AUDIO_CODECS: 1
+          BUNDLED_LIBSNDFILE: 1
+          BUNDLED_SDL: 1
+          CMAKE_GENERATOR: Ninja
+          WITH_BASSMIDI: 1
+          WITH_FLUIDSYNTH: 1
+          WITH_VOODOO: 1
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          touch libretro/deps/mpg123/aclocal.m4; sleep 1
+          find libretro/deps/mpg123/ -name "*.in" -exec touch '{}' \; ; sleep 1
+          touch libretro/deps/mpg123/configure
+          make -C $MAKEFILE_PATH -f $MAKEFILE deps
+          LDFLAGS="-Wl,--no-undefined" make -C $MAKEFILE_PATH -f $MAKEFILE -j$(nproc)
+          file $MAKEFILE_PATH/${CORENAME}_libretro.so
+  linux-i686:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: build in i386/ubuntu:focal
+        run: |
+          docker run --rm --platform linux/386 -v "$PWD":/src -w /src i386/ubuntu:focal sh -ec '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y --no-install-recommends build-essential g++-9 autoconf automake libtool libtool-bin gettext autopoint pkg-config ninja-build cmake python3-pip git file libasound2-dev ca-certificates
+            python3 -m pip install meson==0.55.3
+            export CC=gcc-9 CXX=g++-9 platform=unix STATIC_LIBCXX=1 WITH_DYNAREC=x86 BUNDLED_AUDIO_CODECS=1 BUNDLED_LIBSNDFILE=1 BUNDLED_SDL=1 CMAKE_GENERATOR=Ninja WITH_BASSMIDI=1 WITH_FLUIDSYNTH=1 WITH_VOODOO=1
+            touch libretro/deps/sdl_net/aclocal.m4 libretro/deps/mpg123/aclocal.m4; sleep 1
+            find libretro/deps/sdl_net/ libretro/deps/mpg123/ -name "*.in" -exec touch {} \; ; sleep 1
+            touch libretro/deps/sdl_net/configure libretro/deps/mpg123/configure
+            linux32 make -C libretro -f Makefile.libretro deps
+            LDFLAGS="-Wl,--no-undefined" linux32 make -C libretro -f Makefile.libretro -j$(nproc)
+            file libretro/dosbox_libretro.so'
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: x64, triplet: x86_64-w64-mingw32, dynarec: x86_64, sysproc: x86_64 }
+          - { name: i686, triplet: i686-w64-mingw32, dynarec: x86, sysproc: i686 }
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix g++-mingw-w64-i686-posix gcc-mingw-w64-i686-posix binutils-mingw-w64 autoconf automake libtool libtool-bin pkg-config ninja-build cmake python3-pip
+      - run: python3 -m pip install --user meson==0.55.3
+      - name: MXE-named wrappers
+        run: |
+          T=${{ matrix.triplet }}; S=$T.static; B=$HOME/mxe/bin; mkdir -p $B
+          for t in gcc g++; do printf '#!/bin/sh\nexec %s-%s-posix "$@"\n' $T $t > $B/$S-$t; done
+          for t in ar as ld nm ranlib strip windres objcopy objdump dlltool; do printf '#!/bin/sh\nexec %s-%s "$@"\n' $T $t > $B/$S-$t; done
+          cat > $HOME/mxe/toolchain.cmake <<TC
+          set(CMAKE_SYSTEM_NAME Windows)
+          set(CMAKE_SYSTEM_PROCESSOR ${{ matrix.sysproc }})
+          set(CMAKE_C_COMPILER $B/$S-gcc)
+          set(CMAKE_CXX_COMPILER $B/$S-g++)
+          set(CMAKE_RC_COMPILER $B/$S-windres)
+          set(CMAKE_FIND_ROOT_PATH /usr/$T)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(BUILD_SHARED_LIBS OFF)
+          TC
+          printf '#!/bin/sh\ncase "$1" in --build|--install|-E|-P) exec cmake "$@";; esac\nexec cmake -DCMAKE_TOOLCHAIN_FILE=%s -DOPUS_FORTIFY_SOURCE=OFF "$@"\n' $HOME/mxe/toolchain.cmake > $B/$S-cmake
+          printf '#!/bin/sh\nexec env PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH" pkg-config --static "$@"\n' > $B/$S-pkg-config
+          chmod +x $B/*; echo "$B" >> $GITHUB_PATH; echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: build
+        env:
+          STRIP_CORE_LIB: 0
+          AR: ar
+          AS: as
+          CC: gcc
+          CXX: g++
+          platform: win
+          TARGET_TRIPLET: ${{ matrix.triplet }}.static
+          STATIC_LIBCXX: 0
+          WITH_DYNAREC: ${{ matrix.dynarec }}
+          BUNDLED_AUDIO_CODECS: 1
+          BUNDLED_LIBSNDFILE: 1
+          BUNDLED_SDL: 1
+          CMAKE_GENERATOR: Ninja
+          # BASSMIDI loads its library with dlopen; MXE carries dlfcn-win32,
+          # Ubuntu's mingw does not.
+          WITH_BASSMIDI: 0
+          WITH_FLUIDSYNTH: 1
+          WITH_VOODOO: 1
+        run: |
+          touch libretro/deps/sdl_net/aclocal.m4; touch libretro/deps/mpg123/aclocal.m4; sleep 1
+          find libretro/deps/sdl_net/ -name "*.in" -exec touch '{}' \; ; find libretro/deps/mpg123/ -name "*.in" -exec touch '{}' \; ; sleep 1
+          touch libretro/deps/sdl_net/configure; touch libretro/deps/mpg123/configure
+          export PKG_CONFIG_PATH="$PWD/libretro/deps_bin/lib/pkgconfig"
+          # MXE's mingw does not fortify; Ubuntu's does, and the dependencies then
+          # want __memcpy_chk and friends from a libssp nobody links.
+          export EXTRA_CMAKE_FLAGS="-DOPUS_FORTIFY_SOURCE=OFF"
+          export CPPFLAGS="-D_FORTIFY_SOURCE=0" CFLAGS="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" CXXFLAGS="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+          make PKGCONFIG="${TARGET_TRIPLET}-pkg-config" CMAKE="${TARGET_TRIPLET}-cmake" -C $MAKEFILE_PATH -f $MAKEFILE deps
+          LDFLAGS="-Wl,--no-undefined" make PKGCONFIG="${TARGET_TRIPLET}-pkg-config" CMAKE="${TARGET_TRIPLET}-cmake" -C $MAKEFILE_PATH -f $MAKEFILE -j$(nproc)
+          file $MAKEFILE_PATH/${CORENAME}_libretro.dll
+  osx-x64:
+    runs-on: macos-15-intel
+    env:
+      # The buildbot Mac builds with the gcc-11 from realnc's homebrew bundle,
+      # which does not get along with the SDK on GitHub's current macOS image;
+      # Apple clang checks the code just as well here.
+      CC: clang
+      CXX: clang++
+      platform: osx
+      BUNDLED_AUDIO_CODECS: 1
+      BUNDLED_LIBSNDFILE: 1
+      BUNDLED_SDL: 1
+      CMAKE_GENERATOR: Ninja
+      WITH_BASSMIDI: 1
+      WITH_FLUIDSYNTH: 1
+      WITH_VOODOO: 1
+      WITH_DYNAREC: x86_64
+      STATIC_LIBCXX: 0  # -static-libgcc is a gcc option; clang links the system libc++
+      PKG_CONFIG_FLAGS: --static
+      # Apple clang's libc++ has std::filesystem from 10.15 on; the buildbot's
+      # gcc-11 brings its own.
+      MACOSX_DEPLOYMENT_TARGET: '10.15'
+      HOMEBREW_PREFIX: /Users/Shared/homebrew-dosbox-core
+      HOMEBREW_CELLAR: /Users/Shared/homebrew-dosbox-core/Cellar
+      HOMEBREW_SHELLENV_PREFIX: /Users/Shared/homebrew-dosbox-core
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: |
+          export PATH="${HOMEBREW_PREFIX}/bin:${HOMEBREW_PREFIX}/sbin:$PATH"
+          sudo rm -rf "${HOMEBREW_PREFIX}"; sudo mkdir "${HOMEBREW_PREFIX}"; sudo chown $(id -u) "${HOMEBREW_PREFIX}" /Users/Shared
+          pushd .
+          cd "${HOMEBREW_PREFIX}"/..
+          curl -s -S -L 'https://github.com/realnc/stuff/releases/download/stuff/zstd-macos.tar.xz' | tar x
+          curl -s -S -L 'https://github.com/realnc/stuff/releases/download/stuff/homebrew-dosbox-core.tar.zst' | ./zstd -d | tar x
+          cd "${HOMEBREW_PREFIX}"
+          mkdir static_libs
+          ln -s "${HOMEBREW_PREFIX}"/lib/*.a static_libs/
+          # The bundle's autotools were built on a macOS that still had perl5.18.
+          for f in "${HOMEBREW_PREFIX}"/bin/*; do head -c 64 "$f" 2>/dev/null | grep -q '^#!/usr/bin/perl' && sed -i '' '1s|^#!/usr/bin/perl[0-9.]*|#!/usr/bin/env perl|' "$(readlink -f "$f")" || true; done
+          popd
+          touch libretro/deps/sdl_net/aclocal.m4 libretro/deps/mpg123/aclocal.m4; sleep 1
+          find libretro/deps/sdl_net/ libretro/deps/mpg123/ -name "*.in" -exec touch '{}' \; ; sleep 1
+          touch libretro/deps/sdl_net/configure libretro/deps/mpg123/configure
+          make -C $MAKEFILE_PATH -f $MAKEFILE deps
+          export LDFLAGS="-L \"$PWD/libretro/deps_bin/lib\" -L ${HOMEBREW_PREFIX}/static_libs -undefined error"
+          make -C $MAKEFILE_PATH -f $MAKEFILE NUMPROC=$(sysctl -n hw.ncpu) -j$(sysctl -n hw.ncpu)
+          file $MAKEFILE_PATH/${CORENAME}_libretro.dylib
+  android:
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [armeabi-v7a, arm64-v8a, x86_64, x86]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build cmake
+      - name: build
+        env:
+          CMAKE: cmake
+          CMAKE_BUILD_TYPE: Release
+          ANDROID_ABI: ${{ matrix.abi }}
+        run: |
+          NDK_ROOT=$ANDROID_NDK_LATEST_HOME
+          DEPS_BIN_DIR="$PWD/$MAKEFILE_PATH/deps_bin/$ANDROID_ABI" \
+          EXTRA_CMAKE_FLAGS="-DANDROID_PLATFORM=android-16 -DCMAKE_TOOLCHAIN_FILE=${NDK_ROOT}/build/cmake/android.toolchain.cmake -DANDROID_STL=c++_static -DANDROID_ABI=${ANDROID_ABI}" \
+            make -C $MAKEFILE_PATH -f deps/munt.makefile
+          $NDK_ROOT/ndk-build --no-print-directory -j$(nproc) -C libretro/jni APP_ABI=$ANDROID_ABI
+          file libretro/libs/$ANDROID_ABI/libretro.so
